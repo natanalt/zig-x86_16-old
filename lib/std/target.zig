@@ -466,6 +466,11 @@ pub const Target = struct {
         macabi,
 
         pub fn default(arch: Cpu.Arch, target_os: Os) Abi {
+            if (arch == .x86_16) {
+                return .none; // TODO(x86_16): is .none a good ABI approach
+                              // in theory supporting a "GNU" ABI (basically what's done by the unofficial ia16-elf toolchain)
+                              // could work too?
+            }
             if (arch.isWasm()) {
                 return .musl;
             }
@@ -774,6 +779,7 @@ pub const Target = struct {
             thumb,
             thumbeb,
             i386,
+            x86_16,
             x86_64,
             xcore,
             nvptx,
@@ -802,7 +808,7 @@ pub const Target = struct {
 
             pub fn isX86(arch: Arch) bool {
                 return switch (arch) {
-                    .i386, .x86_64 => true,
+                    .i386, .x86_64, .x86_16 => true,
                     else => false,
                 };
             }
@@ -925,6 +931,7 @@ pub const Target = struct {
                     .powerpc64 => ._PPC64,
                     .powerpc64le => ._PPC64,
                     .riscv64 => ._RISCV,
+                    .x86_16 => ._386,
                     .x86_64 => ._X86_64,
                     .nvptx64 => ._NONE,
                     .le64 => ._NONE,
@@ -986,6 +993,7 @@ pub const Target = struct {
                     .powerpc64le => .Unknown,
                     .riscv64 => .RISCV64,
                     .x86_64 => .X64,
+                    .x86_16 => .I386,
                     .nvptx64 => .Unknown,
                     .le64 => .Unknown,
                     .amdil64 => .Unknown,
@@ -1036,6 +1044,7 @@ pub const Target = struct {
                     .riscv32,
                     .riscv64,
                     .i386,
+                    .x86_16,
                     .x86_64,
                     .wasm32,
                     .wasm64,
@@ -1076,6 +1085,7 @@ pub const Target = struct {
                     .avr,
                     .msp430,
                     .spu_2,
+                    .x86_16,
                     => return 16,
 
                     .arc,
@@ -1149,7 +1159,7 @@ pub const Target = struct {
                     .riscv32, .riscv64 => "riscv",
                     .sparc, .sparcv9, .sparcel => "sparc",
                     .s390x => "systemz",
-                    .i386, .x86_64 => "x86",
+                    .i386, .x86_64, .x86_16 => "x86", // TODO(x86_16): is this a valid path?
                     .nvptx, .nvptx64 => "nvptx",
                     .wasm32, .wasm64 => "wasm",
                     .spirv32, .spirv64 => "spir-v",
@@ -1601,6 +1611,7 @@ pub const Target = struct {
                 .renderscript32,
                 .renderscript64,
                 .ve,
+                .x86_16,
                 => return result,
             },
 

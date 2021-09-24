@@ -480,6 +480,7 @@ pub fn needUnwindTables(target: std.Target) bool {
 /// which can affect this value. Audit this!
 pub fn largestAtomicBits(target: std.Target) u32 {
     return switch (target.cpu.arch) {
+        .x86_16,
         .avr,
         .msp430,
         .spu_2,

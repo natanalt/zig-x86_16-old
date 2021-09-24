@@ -83,13 +83,13 @@ pub fn generateFunction(
     debug_output: DebugInfoOutput,
 ) GenerateSymbolError!FnResult {
     switch (bin_file.options.target.cpu.arch) {
-        .wasm32 => unreachable, // has its own code path
-        .wasm64 => unreachable, // has its own code path
-        .arm => return Function(.arm).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
-        .armeb => return Function(.armeb).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
-        .aarch64 => return Function(.aarch64).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
-        .aarch64_be => return Function(.aarch64_be).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
-        .aarch64_32 => return Function(.aarch64_32).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
+        //.wasm32 => unreachable, // has its own code path
+        //.wasm64 => unreachable, // has its own code path
+        //.arm => return Function(.arm).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
+        //.armeb => return Function(.armeb).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
+        //.aarch64 => return Function(.aarch64).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
+        //.aarch64_be => return Function(.aarch64_be).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
+        //.aarch64_32 => return Function(.aarch64_32).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.arc => return Function(.arc).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.avr => return Function(.avr).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.bpfel => return Function(.bpfel).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
@@ -106,7 +106,7 @@ pub fn generateFunction(
         //.r600 => return Function(.r600).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.amdgcn => return Function(.amdgcn).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.riscv32 => return Function(.riscv32).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
-        .riscv64 => return Function(.riscv64).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
+        //.riscv64 => return Function(.riscv64).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.sparc => return Function(.sparc).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.sparcv9 => return Function(.sparcv9).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.sparcel => return Function(.sparcel).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
@@ -116,7 +116,8 @@ pub fn generateFunction(
         //.thumb => return Function(.thumb).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.thumbeb => return Function(.thumbeb).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.i386 => return Function(.i386).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
-        .x86_64 => return Function(.x86_64).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
+        //.x86_64 => return Function(.x86_64).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
+        .x86_16 => return Function(.x86_16).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.xcore => return Function(.xcore).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.nvptx => return Function(.nvptx).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.nvptx64 => return Function(.nvptx64).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
@@ -3094,6 +3095,9 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
             const ret_ty = self.fn_type.fnReturnType();
             try self.setRegOrMem(ret_ty, self.ret_mcv, mcv);
             switch (arch) {
+                .x86_16 => {
+                    try self.code.append(0xc3); // ret
+                },
                 .i386 => {
                     try self.code.append(0xc3); // ret
                 },
@@ -5336,6 +5340,7 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
         }
 
         const Register = switch (arch) {
+            .x86_16 => @import("codegen/x86_16.zig").Register,
             .i386 => @import("codegen/x86.zig").Register,
             .x86_64 => @import("codegen/x86_64.zig").Register,
             .riscv64 => @import("codegen/riscv64.zig").Register,
@@ -5364,6 +5369,7 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
         };
 
         const callee_preserved_regs = switch (arch) {
+            .x86_16 => @import("codegen/x86_16.zig").callee_preserved_regs,
             .i386 => @import("codegen/x86.zig").callee_preserved_regs,
             .x86_64 => @import("codegen/x86_64.zig").callee_preserved_regs,
             .riscv64 => @import("codegen/riscv64.zig").callee_preserved_regs,
