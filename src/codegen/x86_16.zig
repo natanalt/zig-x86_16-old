@@ -204,6 +204,10 @@ pub const Encoder = struct {
         try self.code.append(@truncate(u8, imm >> 8));
     }
 
+    pub fn modRm(self: *Encoder, effective: EffectiveAddrType, other: Register) !void {
+        try self.imm8(createModRmByte(effective, other));
+    }
+
     pub fn retn(self: *Encoder) !void {
         try self.imm8(0xc3);
     }
@@ -218,12 +222,33 @@ pub const Encoder = struct {
             8 => {
                 // mov Eb, Gb
                 try self.imm8(0x88);
-                try self.imm8(createModRmByte(EffectiveAddrType.fromRegister(dest), src));
+                try self.modRm(EffectiveAddrType.fromRegister(dest), src);
             },
             16 => {
                 // mov Ew, Gw
                 try self.imm8(0x89);
-                try self.imm8(createModRmByte(EffectiveAddrType.fromRegister(dest), src));
+                try self.modRm(EffectiveAddrType.fromRegister(dest), src);
+            },
+            else => unreachable,
+        }
+    }
+
+    /// Generates `mov dest, val`
+    /// Asserts that val can fit in the target register
+    pub fn moveImmToReg(self: *Encoder, dest: Register, val: u16) !void {
+        switch (dest.size()) {
+            8 => {
+                if (val > 0xFF)
+                    @panic("x86_16 codegen bug: Encoder.moveImmToReg: val is too large for destination register");
+
+                // mov Gb, imm8
+                try self.imm8(@as(u8, 0xB0) + dest.id());
+                try self.imm8(@truncate(u8, val));
+            },
+            16 => {
+                // mov Gb, imm8
+                try self.imm8(@as(u8, 0xB8) + dest.id());
+                try self.imm16(val);
             },
             else => unreachable,
         }

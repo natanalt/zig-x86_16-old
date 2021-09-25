@@ -4562,6 +4562,12 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
 
                         try X8616Encoder.init(self.code).moveRegToReg(reg, src_reg);
                     },
+                    .immediate => |x| {
+                        // TODO(x86_16): use xor for immediate reg set if x == 0
+                        if (x > 0xFFFF)
+                            return self.fail("codegen bug: tried to set too large immediate (0x{X}) in register {}", .{x, reg});
+                        try X8616Encoder.init(self.code).moveImmToReg(reg, @truncate(u16, x));
+                    },
                     else => return self.fail("TODO implement genSetReg for {s} for x86_16", .{@tagName(mcv)}),
                 },
                 .x86_64 => switch (mcv) {
