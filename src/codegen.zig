@@ -21,6 +21,7 @@ const log = std.log.scoped(.codegen);
 const build_options = @import("build_options");
 const RegisterManager = @import("register_manager.zig").RegisterManager;
 
+const X8616Encoder = @import("codegen/x86_16.zig").Encoder;
 const X8664Encoder = @import("codegen/x86_64.zig").Encoder;
 
 pub const FnResult = union(enum) {
@@ -3096,7 +3097,7 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
             try self.setRegOrMem(ret_ty, self.ret_mcv, mcv);
             switch (arch) {
                 .x86_16 => {
-                    try self.code.append(0xc3); // ret
+                    try X8616Encoder.init(self.code).retn();
                 },
                 .i386 => {
                     try self.code.append(0xc3); // ret
@@ -4539,6 +4540,30 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
                     },
                     else => return self.fail("TODO implement getSetReg for riscv64 {}", .{mcv}),
                 },
+                .x86_16 => switch (mcv) {
+                    .dead => unreachable,
+                    .ptr_stack_offset => unreachable,
+                    .ptr_embedded_in_code => unreachable,
+                    .unreach, .none => return, // Nothing to do.
+                    .undef => {
+                        if (!self.wantSafety())
+                            return; // The already existing value will do just fine.
+                        // Write the debug undefined value.
+                        switch (reg.size()) {
+                            8 => return self.genSetReg(ty, reg, .{ .immediate = 0xaa }),
+                            16 => return self.genSetReg(ty, reg, .{ .immediate = 0xaaaa }),
+                            else => unreachable,
+                        }
+                    },
+                    .register => |src_reg| {
+                        // If the registers are the same, nothing to do.
+                        if (src_reg.id() == reg.id())
+                            return;
+
+                        try X8616Encoder.init(self.code).moveRegToReg(reg, src_reg);
+                    },
+                    else => return self.fail("TODO implement genSetReg for {s} for x86_16", .{@tagName(mcv)}),
+                },
                 .x86_64 => switch (mcv) {
                     .dead => unreachable,
                     .ptr_stack_offset => unreachable,
@@ -5277,6 +5302,17 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
             } else if (!ret_ty.hasCodeGenBits()) {
                 result.return_value = .{ .none = {} };
             } else switch (arch) {
+                .x86_16 => switch (cc) {
+                    .Naked => unreachable,
+                    .Unspecified, .C => {
+                        const ret_ty_size = ret_ty.abiSize(self.target.*);
+                        if (ret_ty_size > 2) {
+                            return self.fail("x86_16: unsupported type size {}", .{ret_ty_size});
+                        }
+                        result.return_value = .{ .register = .ax };
+                    },
+                    else => return self.fail("TODO implement function return values for {}", .{cc}),
+                },
                 .x86_64 => switch (cc) {
                     .Naked => unreachable,
                     .Unspecified, .C => {
