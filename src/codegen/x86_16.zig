@@ -36,20 +36,9 @@ pub const Register = enum(u8) {
         };
     }
 
-    /// Convert from any register to its 32 bit alias.
-    pub fn to32(self: Register) Register {
-        _ = self;
-        @compileError("x86_16: Register.to32() is never going to exist");
-    }
-
-    /// Convert from any register to its 16 bit alias.
-    pub fn to16(self: Register) Register {
-        return @intToEnum(Register, @as(u8, self.id()) + 8);
-    }
-
     /// Convert from any register to its 8 bit alias.
     pub fn to8(self: Register) Register {
-        return @intToEnum(Register, @as(u8, self.id()) + 16);
+        return @intToEnum(Register, @as(u8, self.id()) + 8);
     }
 
     pub fn dwarfLocOp(reg: Register) u8 {
@@ -170,13 +159,13 @@ pub const EffectiveAddrType = enum(u5) {
 };
 
 /// Format of a Mod/RM byte:
-///  * bits 0-1 => rm
-///  * bits 2-4 => reg
+///  * bits 0-2 => rm
+///  * bits 3-5 => reg
 ///  * bits 6-7 => mod
 pub fn createModRmByte(effective: EffectiveAddrType, other: Register) u8 {
     var result: u8 = 0;
     result |= @intCast(u8, effective.getRM()) << 0;
-    result |= @intCast(u8, other.id()) << 2;
+    result |= @intCast(u8, other.id()) << 3;
     result |= @intCast(u8, effective.getMod()) << 6;
     return result;
 }
@@ -218,16 +207,36 @@ pub const Encoder = struct {
         if (dest.size() != src.size())
             @panic("x86_16 codegen bug: Encoder.moveRegToReg: dest and src are of different sizes");
 
-        switch (dest.size()) {
+        try self.moveRegToEff(EffectiveAddrType.fromRegister(dest), src);
+    }
+
+    pub fn moveRegToEff(self: *Encoder, dest: EffectiveAddrType, src: Register) !void {
+        switch (src.size()) {
             8 => {
                 // mov Eb, Gb
                 try self.imm8(0x88);
-                try self.modRm(EffectiveAddrType.fromRegister(dest), src);
+                try self.modRm(dest, src);
             },
             16 => {
                 // mov Ew, Gw
                 try self.imm8(0x89);
-                try self.modRm(EffectiveAddrType.fromRegister(dest), src);
+                try self.modRm(dest, src);
+            },
+            else => unreachable,
+        }
+    }
+
+    pub fn moveEffToReg(self: *Encoder, dest: Register, src: EffectiveAddrType) !void {
+        switch (dest.size()) {
+            8 => {
+                // mov Gb, Eb
+                try self.imm8(0x8a);
+                try self.modRm(src, dest);
+            },
+            16 => {
+                // mov Gw, Ew
+                try self.imm8(0x8b);
+                try self.modRm(src, dest);
             },
             else => unreachable,
         }
@@ -252,6 +261,30 @@ pub const Encoder = struct {
             },
             else => unreachable,
         }
+    }
+
+    pub fn addRegToReg(self: *Encoder, dest: Register, src: Register) !void {
+        switch (dest.size()) {
+            8 => {
+                // add Eb, Gb
+                try self.imm8(0x00);
+                try self.modRm(EffectiveAddrType.fromRegister(dest), src);
+            },
+            16 => {
+                // mov Ew, Gw
+                try self.imm8(0x01);
+                try self.modRm(EffectiveAddrType.fromRegister(dest), src);
+            },
+            else => unreachable,
+        }
+    }
+
+    pub fn push(self: *Encoder, reg: Register) !void {
+        try self.imm8(@as(u8, 0x50) + reg.id());
+    }
+
+    pub fn pop(self: *Encoder, reg: Register) !void {
+        try self.imm8(@as(u8, 0x58) + reg.id());
     }
 };
 

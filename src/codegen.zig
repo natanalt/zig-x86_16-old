@@ -591,6 +591,64 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
 
         fn gen(self: *Self) !void {
             switch (arch) {
+                .x86_16 => {
+                    const cc = self.fn_type.fnCallingConvention();
+
+                    switch (cc) {
+                        .Unspecified, .C => {
+                            var encoder = X8616Encoder.init(self.code);
+
+                            try encoder.push(.bp);
+                            try encoder.moveRegToReg(.bp, .sp);
+
+                            // Manually write a `sub sp, imm16` opcode, and patch the immediate after the function is
+                            // entirely generated and therefore we know the stack frame size
+                            try self.code.appendSlice(&[_]u8{
+                                // grp1 Ew, Iw  (in this case reg=5, so in the end the `sub` opcode)
+                                0x81, 0xec,
+                                0x00, 0x00,
+                            });
+                            const patch_base = self.code.items.len - 2;
+                            try self.dbgSetPrologueEnd();
+
+                            try self.genBody(self.air.getMainBody());
+
+                            // Do the stack frame size patch
+                            const stack_end = self.max_end_stack;
+                            if (stack_end > math.maxInt(i16))
+                                return self.failSymbol("too much stack used in call parameters", .{});
+                            const aligned_stack_end = mem.alignForward(stack_end, self.stack_align);
+                            mem.writeIntLittle(u16, self.code.items[patch_base..][0..2], @intCast(u16, aligned_stack_end));
+
+                            // Patch all the ret relocations
+                            const ret_index = self.code.items.len;
+                            if (ret_index > math.maxInt(i16))
+                                return self.fail("this function is too big, can't relocate returns", .{});
+                            for (self.exitlude_jump_relocs.items) |jmp_reloc| {
+                                const rel_address = @intCast(u16, ret_index - (jmp_reloc + 2));
+
+                                if (rel_address == 0) {
+                                    // If the relative address is 0, this means that the jmp rel16 opcode is just before
+                                    // the actual epilogue. In this case, don't patch anything, and actually remove the last
+                                    // 3 bytes of jump
+                                    self.code.items.len -= 3;
+                                } else {
+                                    mem.writeIntLittle(u16, self.code.items[jmp_reloc..][0..2], rel_address);
+                                }
+                            }
+
+                            try self.dbgSetEpilogueBegin();
+                            try encoder.pop(.bp);
+                            try encoder.retn();
+                        },
+                        .Naked => {
+                            try self.dbgSetPrologueEnd();
+                            try self.genBody(self.air.getMainBody());
+                            try self.dbgSetEpilogueBegin();
+                        },
+                        else => return self.fail("Unknown calling convention {}", .{cc}),
+                    }
+                },
                 .x86_64 => {
                     try self.code.ensureUnusedCapacity(11);
 
@@ -1284,6 +1342,7 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
         fn airAdd(self: *Self, inst: Air.Inst.Index) !void {
             const bin_op = self.air.instructions.items(.data)[inst].bin_op;
             const result: MCValue = if (self.liveness.isUnused(inst)) .dead else switch (arch) {
+                .x86_16 => try self.genX8616BinMath(inst, bin_op.lhs, bin_op.rhs),
                 .x86_64 => try self.genX8664BinMath(inst, bin_op.lhs, bin_op.rhs),
                 .arm, .armeb => try self.genArmBinOp(inst, bin_op.lhs, bin_op.rhs, .add),
                 else => return self.fail("TODO implement add for {}", .{self.target.cpu.arch}),
@@ -2009,6 +2068,31 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
 
             writeInt(u32, try self.code.addManyAsArray(4), Instruction.mul(.al, dst_mcv.register, lhs_mcv.register, rhs_mcv.register).toU32());
             return dst_mcv;
+        }
+
+        /// Performs the following ops (more to come):
+        /// ADD
+        fn genX8616BinMath(self: *Self, inst: Air.Inst.Index, op_lhs: Air.Inst.Ref, op_rhs: Air.Inst.Ref) !MCValue {
+            const lhs = try self.resolveInst(op_lhs);
+            const rhs = try self.resolveInst(op_rhs);
+            
+            var dst: MCValue = undefined;
+
+            //const inst_ty = self.air.typeOfIndex(inst);
+            const air_tags = self.air.instructions.items(.tag);
+            switch (air_tags[inst]) {
+                .add, .addwrap => {
+                    // This is a very quick and dirty solution, involving unnecessary reg/mem allocation,
+                    // so this should be changed at some point
+                    // TODO(x86_16): improve getX8616BinMath
+                    dst = try self.copyToNewRegister(inst, lhs);
+                    var lhs_reg = try self.copyToNewRegister(inst, rhs);
+                    try X8616Encoder.init(self.code).addRegToReg(dst.register, lhs_reg.register);
+                },
+                else => return self.fail("TODO binary op of type {s} not yet implemented for x86_16", .{@tagName(air_tags[inst])}),
+            }
+        
+            return dst;
         }
 
         /// Perform "binary" operators, excluding comparisons.
@@ -3097,7 +3181,9 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
             try self.setRegOrMem(ret_ty, self.ret_mcv, mcv);
             switch (arch) {
                 .x86_16 => {
-                    try X8616Encoder.init(self.code).retn();
+                    // TODO: just like x86_64, this won't work with implemented defers
+                    try self.code.appendSlice(&[_]u8{ 0xe9, 0x00, 0x00 }); // jmp rel16
+                    try self.exitlude_jump_relocs.append(self.gpa, self.code.items.len - 2);
                 },
                 .i386 => {
                     try self.code.append(0xc3); // ret
@@ -4568,6 +4654,19 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
                             return self.fail("codegen bug: tried to set too large immediate (0x{X}) in register {}", .{x, reg});
                         try X8616Encoder.init(self.code).moveImmToReg(reg, @truncate(u16, x));
                     },
+                    .stack_offset => |offset| {
+                        // Generate `mov reg, word [bp + offset]`
+                        var encoder = X8616Encoder.init(self.code);
+                        if (offset <= 0x7f) {
+                            try encoder.moveEffToReg(reg, .eff_bp_imm8);
+                            try encoder.imm8(@intCast(u8, offset));
+                        } else if (offset <= 0x7fff) {
+                            try encoder.moveEffToReg(reg, .eff_bp_imm16);
+                            try encoder.imm16(@intCast(u16, offset));
+                        } else {
+                            return self.fail("codegen bug: trying to read from too big stack offset", .{});
+                        }
+                    },
                     else => return self.fail("TODO implement genSetReg for {s} for x86_16", .{@tagName(mcv)}),
                 },
                 .x86_64 => switch (mcv) {
@@ -5147,6 +5246,53 @@ fn Function(comptime arch: std.Target.Cpu.Arch) type {
             const ret_ty = fn_ty.fnReturnType();
 
             switch (arch) {
+                .x86_16 => {
+                    switch (cc) {
+                        .Naked => {
+                            if (result.args.len != 0)
+                                return self.fail("Naked functions with function parameters aren't allowed", .{});
+                            result.return_value = .{ .unreach = {} };
+                            result.stack_byte_count = 0;
+                            result.stack_align = 1;
+                            return result;
+                        },
+                        .Unspecified, .C => {
+                            // For now all parameters are gonna be pushed on stack, to simplify the codegen
+                            //
+                            // Even though 16-bit x86 comes with relatively few registers (6 usable 16-bit regs),
+                            // a few of them could be used to store parameters, especially if the function
+                            // doesn't take that many parameters (and if a lot of them are u16 and stuff)
+                            //
+                            // Potential support for register passing would ideally also do things like giving
+                            // registers priorities (for example, bx, si and di for pointers, as they are the
+                            // only ones that can be used in effective addresses, so choosing them first
+                            // for pointers, if possible, would potentially omit unnecessary register moves
+                            // later on)
+
+                            // I think it should begin with 4, because of the pushed return address and bp?
+                            var next_stack_offset: u16 = 4;
+
+                            for (param_types) |ty, i| {
+                                // Not sure why it's done, but the x86_64 codegen does it too, so I'll just copy it
+                                // in ^^
+                                if (!ty.hasCodeGenBits()) {
+                                    assert(cc != .C);
+                                    result.args[i] = .{ .none = {} };
+                                    continue;
+                                }
+
+                                // Resolve the on-stack parameter
+                                const param_size = @intCast(u16, ty.abiSize(self.target.*));
+                                result.args[i] = .{ .stack_offset = next_stack_offset };
+                                next_stack_offset += param_size;
+                            }
+
+                            result.stack_byte_count = next_stack_offset;
+                            result.stack_align = 2;
+                        },
+                        else => return self.fail("TODO implement function parameters for {} on x86_16", .{cc}),
+                    }
+                },
                 .x86_64 => {
                     switch (cc) {
                         .Naked => {
