@@ -117,7 +117,7 @@ pub fn generateFunction(
         //.thumb => return Function(.thumb).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.thumbeb => return Function(.thumbeb).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.i386 => return Function(.i386).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
-        //.x86_64 => return Function(.x86_64).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
+        .x86_64 => return Function(.x86_64).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         .x86_16 => return Function(.x86_16).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.xcore => return Function(.xcore).generate(bin_file, src_loc, func, air, liveness, code, debug_output),
         //.nvptx => return Function(.nvptx).generate(bin_file, src_loc, func, air, liveness, code, debug_output),

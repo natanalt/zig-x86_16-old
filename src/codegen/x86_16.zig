@@ -279,6 +279,41 @@ pub const Encoder = struct {
         }
     }
 
+    /// Generates `add reg, imm`
+    /// Assertsthat val can fit in the target register
+    pub fn addImmToReg(self: *Encoder, reg: Register, imm: u16) !void {
+        if (reg.size() == 8 and imm > 0xFF)
+            @panic("x86_16 codegen bug: Encoder.moveImmToReg: val is too large for destination register");
+
+        switch (reg) {
+            .al => {
+                // add al, imm8
+                try self.imm8(0x04);
+                try self.imm8(@truncate(u8, imm));
+            },
+            .ax => {
+                // add ax, imm8
+                try self.imm8(0x05);
+                try self.imm16(imm);
+            },
+            else => switch (reg.size()) {
+                8 => {
+                    // grp1 Eb, imm8 (reg=0, `add` opcode)
+                    try self.imm8(0x80);
+                    try self.modRm(EffectiveAddrType.fromRegister(reg), @intToEnum(Register, 0));
+                    try self.imm8(@truncate(u8, imm));
+                },
+                16 => {
+                    // grp1 Ew, imm16 (reg=0, `add` opcode)
+                    try self.imm8(0x81);
+                    try self.modRm(EffectiveAddrType.fromRegister(reg), @intToEnum(Register, 0));
+                    try self.imm16(imm);
+                },
+                else => unreachable,
+            },
+        }
+    }
+
     pub fn push(self: *Encoder, reg: Register) !void {
         try self.imm8(@as(u8, 0x50) + reg.id());
     }
